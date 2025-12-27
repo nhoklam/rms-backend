@@ -1,0 +1,44 @@
+package com.company.rms.repository.allocation;
+
+import com.company.rms.entity.allocation.ViewResourceAvailability;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+import org.springframework.stereotype.Repository;
+
+import java.math.BigDecimal;
+import java.util.List;
+
+@Repository
+public interface ViewResourceAvailabilityRepository extends JpaRepository<ViewResourceAvailability, Long> {
+    
+    /**
+     * Smart Search - Tìm resource available với filters
+     */
+    @Query("SELECT v FROM ViewResourceAvailability v " +
+           "WHERE v.availableCapacity > 0 " +
+           "AND (:jobTitle IS NULL OR v.jobTitle LIKE %:jobTitle%) " +
+           "AND (:levelName IS NULL OR v.levelName = :levelName) " +
+           "AND (:minCapacity IS NULL OR v.availableCapacity >= :minCapacity) " +
+           "ORDER BY v.availableCapacity DESC")
+    List<ViewResourceAvailability> searchAvailableResources(
+        @Param("jobTitle") String jobTitle,
+        @Param("levelName") String levelName,
+        @Param("minCapacity") BigDecimal minCapacity
+    );
+
+    /**
+     * Tìm theo skills - Join với employee_skills
+     */
+    @Query("SELECT DISTINCT v FROM ViewResourceAvailability v " +
+           "JOIN Employee e ON e.id = v.employeeId " +
+           "JOIN e.skills es " +
+           "WHERE v.availableCapacity > 0 " +
+           "AND es.skill.id IN :skillIds " +
+           "AND es.level >= :minLevel " +
+           "AND es.isVerified = true")
+    List<ViewResourceAvailability> searchBySkills(
+        @Param("skillIds") List<Integer> skillIds,
+        @Param("minLevel") Byte minLevel
+    );
+}
