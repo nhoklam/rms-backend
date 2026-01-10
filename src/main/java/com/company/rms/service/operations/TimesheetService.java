@@ -7,11 +7,13 @@ import com.company.rms.entity.operations.Timesheet;
 import com.company.rms.entity.operations.TimesheetEntry;
 import com.company.rms.entity.project.Project;
 import com.company.rms.entity.hr.Employee;
+import com.company.rms.entity.iam.User; // [MỚI] Import User
 import com.company.rms.exception.BusinessException;
 import com.company.rms.repository.allocation.AllocationRepository;
-import com.company.rms.repository.hr.EmployeeRepository; // Thêm import
+import com.company.rms.repository.hr.EmployeeRepository;
+import com.company.rms.repository.iam.UserRepository; // [MỚI] Import UserRepository
 import com.company.rms.repository.operations.TimesheetRepository;
-import com.company.rms.repository.project.ProjectRepository; // Thêm import
+import com.company.rms.repository.project.ProjectRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -19,8 +21,10 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -29,15 +33,16 @@ public class TimesheetService {
 
     private final TimesheetRepository timesheetRepository;
     private final AllocationRepository allocationRepository;
-    private final EmployeeRepository employeeRepository; // Inject thêm
-    private final ProjectRepository projectRepository;   // Inject thêm
+    private final EmployeeRepository employeeRepository;
+    private final ProjectRepository projectRepository;
+    private final UserRepository userRepository; // [MỚI] Inject thêm để check role
 
-    /**
-     * Submit timesheet with validation
-     */
     @Transactional
     public TimesheetResponse submitTimesheet(TimesheetSubmitRequest request, Long employeeId) {
-        // Validation 1: Check if locked
+        if (employeeId == null) {
+            throw new BusinessException("Employee ID not found for current user");
+        }
+
         Timesheet existingTs = timesheetRepository
             .findByEmployeeIdAndPeriodStart(employeeId, request.getPeriodStart())
             .orElse(null);
@@ -46,8 +51,6 @@ public class TimesheetService {
             throw new BusinessException("Timesheet is locked. Cannot modify.");
         }
 
-        // Validation 2: Check allocations for each entry
-        // (Logic giữ nguyên như bạn cung cấp)
         for (var entryReq : request.getEntries()) {
             LocalDate workDate = entryReq.getWorkDate();
             Long projectId = entryReq.getProjectId();
@@ -61,71 +64,143 @@ public class TimesheetService {
 
             if (!hasAllocation) {
                 throw new BusinessException(
-                    String.format("No active allocation found for project %d on date %s",
-                                projectId, workDate)
+                    String.format("No active allocation found for project %d on date %s", projectId, workDate)
                 );
             }
         }
 
-        // --- BẮT ĐẦU LOGIC SAVE THỰC TẾ ---
-
         if (existingTs == null) {
-            // Create New Timesheet Header
             Employee employee = employeeRepository.findById(employeeId)
                     .orElseThrow(() -> new BusinessException("Employee not found"));
 
             existingTs = Timesheet.builder()
                     .employee(employee)
                     .periodStart(request.getPeriodStart())
-                    .periodEnd(request.getPeriodStart().plusDays(6)) // Giả sử tuần 7 ngày
+                    .periodEnd(request.getPeriodStart().plusDays(6))
                     .status(Timesheet.TimesheetStatus.SUBMITTED)
                     .isLocked(false)
                     .entries(new ArrayList<>())
                     .build();
         } else {
-            // Update Existing: Clear old entries to replace with new ones
-            // (Do entity Timesheet có orphanRemoval = true[cite: 510], nên clear list sẽ xóa record DB)
             existingTs.getEntries().clear();
             existingTs.setStatus(Timesheet.TimesheetStatus.SUBMITTED);
         }
 
-        // Map DTO Entries -> Entity Entries
         for (var reqEntry : request.getEntries()) {
             Project project = projectRepository.findById(reqEntry.getProjectId())
-                    .orElseThrow(() -> new BusinessException("Project not found: " + reqEntry.getProjectId()));
+                    .orElseThrow(() -> new BusinessException("Project not found"));
 
             TimesheetEntry entry = TimesheetEntry.builder()
-                    .timesheet(existingTs) // Set quan hệ ngược
+                    .timesheet(existingTs)
                     .project(project)
                     .workDate(reqEntry.getWorkDate())
-                    // Convert Double (DTO) -> BigDecimal (Entity) [cite: 663, 517]
-                    .hoursWorked(BigDecimal.valueOf(reqEntry.getHoursWorked())) 
+                    .hoursWorked(BigDecimal.valueOf(reqEntry.getHoursWorked()))
                     .description(reqEntry.getDescription())
                     .build();
             
             existingTs.getEntries().add(entry);
         }
         
-        // Save (Cascade sẽ lưu cả entries)
         Timesheet savedTs = timesheetRepository.save(existingTs);
-
-        return new TimesheetResponse(savedTs.getId(), "SUBMITTED", "Timesheet submitted successfully");
+        return mapToResponse(savedTs);
     }
 
-    /**
-     * Lock timesheets for financial closing
-     */
+    // [FIX] Cập nhật logic: Admin thấy hết, PM chỉ thấy nhân viên
+    @Transactional(readOnly = true)
+    public List<TimesheetResponse> getPendingApprovals(Long userId) {
+        if (userId == null) return new ArrayList<>();
+
+        // 1. Lấy thông tin User để check Role
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new BusinessException("User not found"));
+
+        List<Timesheet> timesheets;
+
+        // 2. Kiểm tra: Nếu là ADMIN -> Lấy tất cả (Bao gồm cả của PM)
+        boolean isAdmin = user.getRoles().stream()
+                .anyMatch(role -> role.getName().equals("ROLE_ADMIN"));
+
+        if (isAdmin) {
+            timesheets = timesheetRepository.findAllPendingTimesheets();
+        } else {
+            // 3. Nếu là PM -> Chỉ lấy của nhân viên dự án mình (đã loại trừ chính mình ở Repository)
+            timesheets = timesheetRepository.findPendingApprovalByPm(userId);
+        }
+
+        return timesheets.stream()
+                .map(this::mapToResponse)
+                .collect(Collectors.toList());
+    }
+
+    @Transactional
+    public void approveTimesheet(Long timesheetId, Long approverId) {
+        Timesheet ts = timesheetRepository.findById(timesheetId)
+                .orElseThrow(() -> new BusinessException("Timesheet not found"));
+
+        if (ts.getStatus() != Timesheet.TimesheetStatus.SUBMITTED) {
+            throw new BusinessException("Only SUBMITTED timesheets can be approved");
+        }
+
+        // Chặn tự duyệt (Self-Approval Check)
+        if (ts.getEmployee().getUser().getId().equals(approverId)) {
+            throw new BusinessException("Bạn không thể tự duyệt Timesheet của chính mình.");
+        }
+
+        ts.setStatus(Timesheet.TimesheetStatus.APPROVED);
+        ts.setApproverId(approverId);
+        ts.setApprovedAt(LocalDateTime.now());
+        timesheetRepository.save(ts);
+    }
+
+    @Transactional
+    public void rejectTimesheet(Long timesheetId, Long approverId) {
+        Timesheet ts = timesheetRepository.findById(timesheetId)
+                .orElseThrow(() -> new BusinessException("Timesheet not found"));
+
+        if (ts.getStatus() != Timesheet.TimesheetStatus.SUBMITTED) {
+            throw new BusinessException("Only SUBMITTED timesheets can be rejected");
+        }
+
+        ts.setStatus(Timesheet.TimesheetStatus.REJECTED);
+        ts.setApproverId(approverId);
+        ts.setApprovedAt(LocalDateTime.now());
+        timesheetRepository.save(ts);
+    }
+
     @Transactional
     public int lockTimesheets(int year, int month) {
         List<Timesheet> unlocked = timesheetRepository.findUnlockedTimesheets(year, month);
-        
         for (Timesheet ts : unlocked) {
             ts.setIsLocked(true);
         }
-
         timesheetRepository.saveAll(unlocked);
-        
-        log.info("Locked {} timesheets for {}/{}", unlocked.size(), month, year);
         return unlocked.size();
+    }
+
+    private TimesheetResponse mapToResponse(Timesheet ts) {
+        BigDecimal totalHours = ts.getEntries().stream()
+                .map(TimesheetEntry::getHoursWorked)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        List<TimesheetResponse.EntryDetail> details = ts.getEntries().stream()
+                .map(e -> TimesheetResponse.EntryDetail.builder()
+                        .projectName(e.getProject().getName())
+                        .workDate(e.getWorkDate())
+                        .hours(e.getHoursWorked())
+                        .description(e.getDescription())
+                        .build())
+                .collect(Collectors.toList());
+
+        return TimesheetResponse.builder()
+                .id(ts.getId())
+                .status(ts.getStatus().name())
+                .employeeId(ts.getEmployee().getId())
+                .employeeName(ts.getEmployee().getUser().getFullName())
+                .periodStart(ts.getPeriodStart())
+                .periodEnd(ts.getPeriodEnd())
+                .totalHours(totalHours)
+                .details(details)
+                .message("Success")
+                .build();
     }
 }

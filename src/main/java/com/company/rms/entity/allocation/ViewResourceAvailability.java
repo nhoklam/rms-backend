@@ -10,7 +10,9 @@ import java.math.BigDecimal;
 
 @Entity
 @Immutable
-@Subselect("SELECT * FROM view_resource_availability")
+// [FIX] Hibernate sẽ gọi View này thay vì tạo bảng
+@Subselect("SELECT * FROM view_resource_availability") 
+@Table(name = "view_resource_availability") // Ánh xạ tường minh
 @Getter
 @Setter
 public class ViewResourceAvailability {
@@ -18,25 +20,29 @@ public class ViewResourceAvailability {
     @Id
     @Column(name = "employee_id")
     private Long employeeId;
-    
+
     @Column(name = "employee_code")
     private String employeeCode;
     
     @Column(name = "full_name")
     private String fullName;
-    
+
     @Column(name = "job_title")
     private String jobTitle;
     
     @Column(name = "level_name")
     private String levelName;
-    
+
     @Column(name = "skills_list", columnDefinition = "TEXT")
     private String skillsList;
-    
+
     @Column(name = "current_load")
     private BigDecimal currentLoad;
     
     @Column(name = "available_capacity")
     private BigDecimal availableCapacity;
+
+    // [MỚI] Thêm cột version để phục vụ Optimistic Lock bên Frontend
+    @Column(name = "version")
+    private Long version;
 }

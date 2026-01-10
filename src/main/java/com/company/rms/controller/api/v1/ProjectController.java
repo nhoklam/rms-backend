@@ -28,7 +28,7 @@ public class ProjectController {
     @GetMapping
     @PreAuthorize("hasAnyAuthority('ROLE_PM', 'ROLE_RM', 'ROLE_ADMIN', 'ROLE_EMP')")
     public ResponseEntity<ApiResponse<List<ProjectResponse>>> getAllProjects() {
-        List<Project> projects = projectRepository.findAll();
+        List<Project> projects = projectRepository.findAllWithDetails();
         
         // Map Entity -> DTO để tránh lỗi vòng lặp JSON
         List<ProjectResponse> response = projects.stream()

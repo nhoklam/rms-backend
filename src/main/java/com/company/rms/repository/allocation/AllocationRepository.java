@@ -46,4 +46,25 @@ public interface AllocationRepository extends JpaRepository<Allocation, Long> {
         @Param("firstDay") LocalDate firstDay,
         @Param("lastDay") LocalDate lastDay
     );
+
+    @Query("SELECT a FROM Allocation a " +
+           "WHERE (:projectId IS NULL OR a.project.id = :projectId) " +
+           "AND (:employeeId IS NULL OR a.employee.id = :employeeId) " +
+           "AND (:status IS NULL OR a.status = :status) " +
+           "ORDER BY a.startDate DESC")
+    List<Allocation> searchAllocations(
+        @Param("projectId") Long projectId,
+        @Param("employeeId") Long employeeId,
+        @Param("status") Allocation.AllocationStatus status
+    );
+    @Query("SELECT a FROM Allocation a " +
+           "WHERE a.employee.id = :employeeId " +
+           "AND a.status = 'ACTIVE' " +
+           "AND a.startDate <= :endDate " +
+           "AND a.endDate >= :startDate")
+    List<Allocation> findAllocationsByRange(
+        @Param("employeeId") Long employeeId,
+        @Param("startDate") LocalDate startDate,
+        @Param("endDate") LocalDate endDate
+    );
 }

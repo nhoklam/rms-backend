@@ -5,6 +5,7 @@ import jakarta.persistence.*;
 import lombok.*;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime; // [FIX] Import LocalDateTime
 import java.util.ArrayList;
 import java.util.List;
 
@@ -38,6 +39,13 @@ public class Timesheet {
     @Column(name = "is_locked")
     @Builder.Default
     private Boolean isLocked = false;
+
+    // [FIX] Thêm 2 trường này để sửa lỗi "method undefined" trong Service
+    @Column(name = "approver_id")
+    private Long approverId;
+
+    @Column(name = "approved_at")
+    private LocalDateTime approvedAt;
 
     @OneToMany(mappedBy = "timesheet", cascade = CascadeType.ALL, orphanRemoval = true)
     @Builder.Default

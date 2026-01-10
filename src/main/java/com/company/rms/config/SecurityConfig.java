@@ -54,8 +54,9 @@ public class SecurityConfig {
                 // 3. Projects & Resources (Cho phép xem Dashboard)
                 .requestMatchers(HttpMethod.GET, "/api/v1/projects/**").hasAnyAuthority("ROLE_PM", "ROLE_RM", "ROLE_ADMIN", "ROLE_EMP")
                 .requestMatchers(HttpMethod.GET, "/api/v1/resources/**").hasAnyAuthority("ROLE_PM", "ROLE_RM", "ROLE_ADMIN", "ROLE_EMP")
-                
+                .requestMatchers(HttpMethod.GET, "/api/v1/allocations/employee/**").hasAnyAuthority("ROLE_RM", "ROLE_PM", "ROLE_ADMIN", "ROLE_EMP")
                 // 4. Các chức năng ghi (Write)
+                .requestMatchers("/api/v1/allocations/**").hasAnyAuthority("ROLE_RM", "ROLE_ADMIN")
                 .requestMatchers("/api/v1/resources/search").hasAnyAuthority("ROLE_PM", "ROLE_RM", "ROLE_ADMIN", "ROLE_EMP")
                 .requestMatchers("/api/v1/allocations/**").hasAnyAuthority("ROLE_RM", "ROLE_ADMIN")
                 

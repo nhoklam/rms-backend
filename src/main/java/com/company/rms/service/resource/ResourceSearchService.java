@@ -58,7 +58,7 @@ public class ResourceSearchService {
         return mapToResponse(view);
     }
     
-    // Method này bị thiếu trong code cũ, cần thêm vào để fix lỗi
+    // Helper method: Map Entity -> DTO
     private ResourceAvailabilityResponse mapToResponse(ViewResourceAvailability view) {
         return ResourceAvailabilityResponse.builder()
             .employeeId(view.getEmployeeId())
@@ -69,6 +69,9 @@ public class ResourceSearchService {
             .skillsList(view.getSkillsList())
             .currentLoad(view.getCurrentLoad())
             .availableCapacity(view.getAvailableCapacity())
+            // [FIX] Map version từ View (Entity) sang Response (DTO)
+            // Nếu null thì trả về 0
+            .version(view.getVersion() != null ? view.getVersion() : 0L)
             .build();
     }
 }

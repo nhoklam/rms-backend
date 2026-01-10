@@ -1,6 +1,7 @@
 package com.company.rms.controller.api.v1;
 
 import com.company.rms.dto.request.AllocationRequest;
+import com.company.rms.dto.request.AllocationUpdateRequest; // [Import DTO]
 import com.company.rms.dto.response.AllocationResponse;
 import com.company.rms.dto.response.ApiResponse;
 import com.company.rms.security.SecurityUtils;
@@ -25,10 +26,6 @@ public class AllocationController {
 
     private final AllocationService allocationService;
 
-    /**
-     * POST /api/v1/allocations - Create new allocation (Booking)
-     * Chỉ RM và ADMIN được phép thực hiện
-     */
     @PostMapping
     @PreAuthorize("hasAnyAuthority('ROLE_RM', 'ROLE_ADMIN')")
     public ResponseEntity<ApiResponse<AllocationResponse>> createAllocation(
@@ -42,22 +39,8 @@ public class AllocationController {
             .body(ApiResponse.success(response, "Allocation created successfully"));
     }
 
-    /**
-     * GET /api/v1/allocations/employee/{employeeId} - Get allocations history
-     * Cho phép cả EMP xem lịch sử của chính mình (nếu cần mở rộng sau này)
-     */
-    @GetMapping("/employee/{employeeId}")
-    @PreAuthorize("hasAnyAuthority('ROLE_RM', 'ROLE_PM', 'ROLE_ADMIN', 'ROLE_EMP')")
-    public ResponseEntity<ApiResponse<List<AllocationResponse>>> getCurrentAllocations(
-            @PathVariable Long employeeId) {
 
-        List<AllocationResponse> allocations = allocationService.getCurrentAllocations(employeeId);
-        return ResponseEntity.ok(ApiResponse.success(allocations));
-    }
 
-    /**
-     * GET /api/v1/allocations/capacity - Calculate remaining capacity
-     */
     @GetMapping("/capacity")
     @PreAuthorize("hasAnyAuthority('ROLE_RM', 'ROLE_ADMIN')")
     public ResponseEntity<ApiResponse<BigDecimal>> calculateCapacity(
@@ -67,5 +50,52 @@ public class AllocationController {
 
         BigDecimal capacity = allocationService.calculateCapacity(employeeId, startDate, endDate);
         return ResponseEntity.ok(ApiResponse.success(capacity));
+    }
+    
+    @GetMapping
+    @PreAuthorize("hasAnyAuthority('ROLE_RM', 'ROLE_PM', 'ROLE_ADMIN')")
+    public ResponseEntity<ApiResponse<List<AllocationResponse>>> searchAllocations(
+            @RequestParam(required = false) Long projectId,
+            @RequestParam(required = false) Long employeeId,
+            @RequestParam(required = false) String status) {
+        
+        List<AllocationResponse> results = allocationService.searchAllocations(projectId, employeeId, status);
+        return ResponseEntity.ok(ApiResponse.success(results));
+    }
+
+    // [FIX] Update Allocation API
+    @PutMapping("/{id}")
+    @PreAuthorize("hasAnyAuthority('ROLE_RM', 'ROLE_ADMIN')")
+    public ResponseEntity<ApiResponse<AllocationResponse>> updateAllocation(
+            @PathVariable Long id,
+            @RequestBody AllocationUpdateRequest request) {
+        return ResponseEntity.ok(ApiResponse.success(allocationService.updateAllocation(id, request)));
+    }
+
+    @PutMapping("/{id}/terminate")
+    @PreAuthorize("hasAnyAuthority('ROLE_RM', 'ROLE_ADMIN')")
+    public ResponseEntity<ApiResponse<Void>> terminateAllocation(@PathVariable Long id) {
+        allocationService.terminateAllocation(id);
+        return ResponseEntity.ok(ApiResponse.success(null, "Allocation terminated"));
+    }
+
+    @GetMapping("/employee/{employeeId}")
+    @PreAuthorize("hasAnyAuthority('ROLE_RM', 'ROLE_PM', 'ROLE_ADMIN', 'ROLE_EMP')")
+    public ResponseEntity<ApiResponse<List<AllocationResponse>>> getCurrentAllocations(
+            @PathVariable Long employeeId,
+            @RequestParam(required = false) LocalDate fromDate, // Param mới
+            @RequestParam(required = false) LocalDate toDate    // Param mới
+    ) {
+        List<AllocationResponse> allocations;
+        
+        if (fromDate != null && toDate != null) {
+            // Logic cho Timesheet: Lấy theo tuần đã chọn
+            allocations = allocationService.getAllocationsForTimesheet(employeeId, fromDate, toDate);
+        } else {
+            // Logic cho Dashboard: Lấy tại thời điểm hiện tại
+            allocations = allocationService.getCurrentAllocations(employeeId);
+        }
+        
+        return ResponseEntity.ok(ApiResponse.success(allocations));
     }
 }

@@ -11,8 +11,11 @@ import java.util.List;
 import java.util.Optional;
 
 @Repository
-// FIX: Thêm <ProjectRateCard, Long> vào đây
 public interface ProjectRateCardRepository extends JpaRepository<ProjectRateCard, Long> {
+
+    // [MỚI] Hàm này thiếu trong code cũ của bạn
+    @Query("SELECT r FROM ProjectRateCard r WHERE r.project.id = :projectId ORDER BY r.effectiveStartDate DESC")
+    List<ProjectRateCard> findByProjectId(@Param("projectId") Long projectId);
 
     @Query("SELECT r FROM ProjectRateCard r " +
            "WHERE r.project.id = :projectId " +
@@ -20,7 +23,6 @@ public interface ProjectRateCardRepository extends JpaRepository<ProjectRateCard
            "AND r.level.id = :levelId " +
            "AND r.effectiveStartDate <= :endDate " +
            "AND (r.effectiveEndDate IS NULL OR r.effectiveEndDate >= :startDate)")
-    // FIX: Thêm <ProjectRateCard>
     List<ProjectRateCard> findOverlappingRateCards(
         @Param("projectId") Long projectId,
         @Param("roleId") Integer roleId,
@@ -35,7 +37,6 @@ public interface ProjectRateCardRepository extends JpaRepository<ProjectRateCard
            "AND r.level.id = :levelId " +
            "AND r.effectiveStartDate <= :date " +
            "AND (r.effectiveEndDate IS NULL OR r.effectiveEndDate >= :date)")
-    // FIX: Thêm <ProjectRateCard>
     Optional<ProjectRateCard> findEffectiveRateCard(
         @Param("projectId") Long projectId,
         @Param("roleId") Integer roleId,

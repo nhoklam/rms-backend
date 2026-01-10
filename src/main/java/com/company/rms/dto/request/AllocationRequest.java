@@ -30,7 +30,7 @@ public class AllocationRequest {
     private Integer effortPercentage;
 
     @NotNull(message = "Start date is required")
-    @Future(message = "Start date must be in the future")
+    @FutureOrPresent(message = "Start date must be in the future")
     private LocalDate startDate;
 
     @NotNull(message = "End date is required")

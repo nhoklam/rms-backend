@@ -1,6 +1,7 @@
 package com.company.rms.service.allocation;
 
 import com.company.rms.dto.request.AllocationRequest;
+import com.company.rms.dto.request.AllocationUpdateRequest; // [Import DTO vừa tạo]
 import com.company.rms.dto.response.AllocationResponse;
 import com.company.rms.entity.allocation.Allocation;
 import com.company.rms.entity.hr.Employee;
@@ -9,7 +10,7 @@ import com.company.rms.exception.BusinessException;
 import com.company.rms.exception.OptimisticLockException;
 import com.company.rms.repository.allocation.AllocationRepository;
 import com.company.rms.repository.hr.EmployeeRepository;
-import com.company.rms.repository.project.ProjectRepository; // Đã có thể import
+import com.company.rms.repository.project.ProjectRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
@@ -17,6 +18,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.List;
 
 @Service
@@ -28,42 +30,32 @@ public class AllocationService {
     private final EmployeeRepository employeeRepository;
     private final ProjectRepository projectRepository;
     
-    /**
-     * CORE: Create Booking with all validations
-     */
     @Transactional
     public AllocationResponse createAllocation(AllocationRequest request, Long createdBy) {
         log.info("Creating allocation for employee {} to project {}", 
                  request.getEmployeeId(), request.getProjectId());
 
-        // 1. Fetch entities with lock (FIX: Chỉ định rõ kiểu Employee và Project)
         Employee employee = employeeRepository.findById(request.getEmployeeId())
             .orElseThrow(() -> new BusinessException("Employee not found"));
 
         Project project = projectRepository.findById(request.getProjectId())
             .orElseThrow(() -> new BusinessException("Project not found"));
 
-        // 2. Validate employee status
         if (employee.getStatus() != Employee.EmployeeStatus.OFFICIAL && 
             employee.getStatus() != Employee.EmployeeStatus.PROBATION) {
             throw new BusinessException("Employee is not available for allocation");
         }
         
-        // 3. Check version for optimistic locking
         if (request.getVersion() != null && !request.getVersion().equals(employee.getVersion())) {
-            throw new OptimisticLockException(
-                "Dữ liệu nhân sự đã thay đổi. Vui lòng tải lại trang."
-            );
+            throw new OptimisticLockException("Dữ liệu nhân sự đã thay đổi. Vui lòng tải lại trang.");
         }
         
-        // 4. Check capacity overlap (FIX: Thêm <Allocation>)
         List<Allocation> overlapping = allocationRepository.findOverlappingAllocations(
             request.getEmployeeId(),
             request.getStartDate(),
             request.getEndDate()
         );
 
-        // FIX: mapToInt giờ sẽ hiểu Allocation::getEffortPercentage vì List đã có kiểu
         int totalEffort = overlapping.stream()
             .mapToInt(Allocation::getEffortPercentage)
             .sum() + request.getEffortPercentage();
@@ -77,7 +69,6 @@ public class AllocationService {
             );
         }
         
-        // 5. Create allocation
         Allocation allocation = Allocation.builder()
             .project(project)
             .employee(employee)
@@ -92,48 +83,86 @@ public class AllocationService {
             .build();
 
         try {
-            // FIX: save trả về Allocation, không phải Object
             Allocation saved = allocationRepository.save(allocation);
             log.info("Allocation created successfully: {}", saved.getId());
             return mapToResponse(saved);
         } catch (ObjectOptimisticLockingFailureException e) {
-            throw new OptimisticLockException(
-                "Dữ liệu nhân sự đã thay đổi bởi người dùng khác. Vui lòng tải lại trang."
-            );
+            throw new OptimisticLockException("Dữ liệu nhân sự đã thay đổi bởi người dùng khác. Vui lòng tải lại trang.");
         }
     }
     
-    /**
-     * Get current allocations of an employee
-     */
     @Transactional(readOnly = true)
-    // FIX: Thêm <AllocationResponse>
     public List<AllocationResponse> getCurrentAllocations(Long employeeId) {
-        // FIX: Thêm <Allocation>
         List<Allocation> allocations = allocationRepository.findCurrentAllocations(employeeId);
-        
-        return allocations.stream()
-            .map(this::mapToResponse) // Giờ map sẽ hiểu kiểu dữ liệu đầu vào
-            .toList();
+        return allocations.stream().map(this::mapToResponse).toList();
     }
     
-    /**
-     * Calculate total capacity for an employee in a period
-     */
     @Transactional(readOnly = true)
-    public BigDecimal calculateCapacity(Long employeeId, 
-                                       java.time.LocalDate startDate, 
-                                       java.time.LocalDate endDate) {
-        // FIX: Thêm <Allocation>
-        List<Allocation> overlapping = allocationRepository.findOverlappingAllocations(
-            employeeId, startDate, endDate
-        );
-        
-        int totalEffort = overlapping.stream()
-            .mapToInt(Allocation::getEffortPercentage)
-            .sum();
-            
+    public BigDecimal calculateCapacity(Long employeeId, LocalDate startDate, LocalDate endDate) {
+        List<Allocation> overlapping = allocationRepository.findOverlappingAllocations(employeeId, startDate, endDate);
+        int totalEffort = overlapping.stream().mapToInt(Allocation::getEffortPercentage).sum();
         return BigDecimal.valueOf(100 - totalEffort);
+    }
+
+    @Transactional(readOnly = true)
+    public List<AllocationResponse> searchAllocations(Long projectId, Long employeeId, String status) {
+        Allocation.AllocationStatus allocStatus = null;
+        if (status != null && !status.isEmpty()) {
+            try {
+                allocStatus = Allocation.AllocationStatus.valueOf(status);
+            } catch (IllegalArgumentException e) { /* Ignore */ }
+        }
+
+        return allocationRepository.searchAllocations(projectId, employeeId, allocStatus)
+                .stream()
+                .map(this::mapToResponse)
+                .toList();
+    }
+
+    // [FIX] Thêm method updateAllocation bị thiếu
+    @Transactional
+    public AllocationResponse updateAllocation(Long id, AllocationUpdateRequest request) {
+        Allocation allocation = allocationRepository.findById(id)
+                .orElseThrow(() -> new BusinessException("Allocation not found"));
+
+        // 1. Check Optimistic Locking
+        if (request.getVersion() != null && !request.getVersion().equals(allocation.getVersion())) {
+            throw new OptimisticLockException("Dữ liệu đã bị thay đổi bởi người khác. Vui lòng tải lại.");
+        }
+
+        // 2. Update logic
+        if (request.getEffortPercentage() != null) {
+            allocation.setEffortPercentage(request.getEffortPercentage());
+        }
+
+        if (request.getEndDate() != null) {
+            if (request.getEndDate().isBefore(allocation.getStartDate())) {
+                throw new BusinessException("End date cannot be before Start date");
+            }
+            allocation.setEndDate(request.getEndDate());
+        }
+
+        Allocation saved = allocationRepository.save(allocation);
+        return mapToResponse(saved);
+    }
+
+    @Transactional
+    public void terminateAllocation(Long id) {
+        Allocation allocation = allocationRepository.findById(id)
+                .orElseThrow(() -> new BusinessException("Allocation not found"));
+        
+        allocation.setEndDate(LocalDate.now()); 
+        allocation.setStatus(Allocation.AllocationStatus.TERMINATED);
+        allocationRepository.save(allocation);
+    }
+    @Transactional(readOnly = true)
+    public List<AllocationResponse> getAllocationsForTimesheet(Long employeeId, LocalDate fromDate, LocalDate toDate) {
+        // Nếu không truyền ngày, mặc định lấy tuần hiện tại
+        LocalDate start = (fromDate != null) ? fromDate : LocalDate.now();
+        LocalDate end = (toDate != null) ? toDate : LocalDate.now();
+
+        List<Allocation> allocations = allocationRepository.findAllocationsByRange(employeeId, start, end);
+        return allocations.stream().map(this::mapToResponse).toList();
     }
     
     private AllocationResponse mapToResponse(Allocation allocation) {

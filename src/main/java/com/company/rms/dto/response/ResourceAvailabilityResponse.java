@@ -28,4 +28,7 @@ public class ResourceAvailabilityResponse {
     
     // Capacity còn lại (%) = 100 - currentLoad
     private BigDecimal availableCapacity; 
+
+    // [MỚI] Thêm field version để Frontend hứng được
+    private Long version;
 }

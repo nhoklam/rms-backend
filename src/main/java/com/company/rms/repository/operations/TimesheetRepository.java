@@ -38,4 +38,14 @@ public interface TimesheetRepository extends JpaRepository<Timesheet, Long> {
         @Param("year") int year,
         @Param("month") int month
     );
+@Query("SELECT DISTINCT t FROM Timesheet t " +
+           "JOIN t.entries e " +
+           "WHERE e.project.projectManager.user.id = :userId " +
+           "AND t.status = 'SUBMITTED' " +
+           "AND t.employee.user.id <> :userId") 
+    List<Timesheet> findPendingApprovalByPm(@Param("userId") Long userId);
+
+    // [MỚI] Hàm dành cho Admin: Lấy TẤT CẢ Timesheet đang chờ duyệt
+    @Query("SELECT t FROM Timesheet t WHERE t.status = 'SUBMITTED'")
+    List<Timesheet> findAllPendingTimesheets();
 }
