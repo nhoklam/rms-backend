@@ -67,4 +67,17 @@ public interface AllocationRepository extends JpaRepository<Allocation, Long> {
         @Param("startDate") LocalDate startDate,
         @Param("endDate") LocalDate endDate
     );
+    @Query("SELECT SUM(a.effortPercentage) FROM Allocation a " +
+           "WHERE a.employee.id = :employeeId " +
+           "AND a.status = 'ACTIVE' " +
+           "AND :date BETWEEN a.startDate AND a.endDate")
+    Integer sumEffortByEmployeeIdAndDate(@Param("employeeId") Long employeeId, 
+                                         @Param("date") LocalDate date);
+
+    @Query("SELECT COUNT(a) FROM Allocation a " +
+           "WHERE a.employee.id = :employeeId " +
+           "AND a.status = 'ACTIVE' " +
+           "AND :date BETWEEN a.startDate AND a.endDate")
+    Integer countActiveProjectsByEmployee(@Param("employeeId") Long employeeId, 
+                                          @Param("date") LocalDate date);
 }

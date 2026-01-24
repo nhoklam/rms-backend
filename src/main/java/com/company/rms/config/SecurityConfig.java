@@ -43,27 +43,41 @@ public class SecurityConfig {
                 // 1. Cho phép Debug & Auth không cần token
                 .requestMatchers("/api/v1/auth/**", "/api/v1/debug/**").permitAll() 
                 
-                // 2. Admin & Ops (Dùng hasAuthority để khớp chính xác ROLE_ trong DB)
+                // 2. Admin & Ops
                 .requestMatchers("/api/v1/admin/**").hasAuthority("ROLE_ADMIN")
                 .requestMatchers("/api/v1/timesheets/lock").hasAuthority("ROLE_ADMIN")
-                // Cho phép xem Master Data (GET) với bất kỳ user nào đã đăng nhập
+                
+                // Master Data
                 .requestMatchers(HttpMethod.GET, "/api/v1/master-data/**").authenticated()
-
-                // Các thao tác ghi (POST, PUT, DELETE) chỉ dành cho ROLE_ADMIN
                 .requestMatchers("/api/v1/master-data/**").hasAuthority("ROLE_ADMIN")
-                // 3. Projects & Resources (Cho phép xem Dashboard)
+                
+                // 3. Projects & Resources (READ)
                 .requestMatchers(HttpMethod.GET, "/api/v1/projects/**").hasAnyAuthority("ROLE_PM", "ROLE_RM", "ROLE_ADMIN", "ROLE_EMP")
                 .requestMatchers(HttpMethod.GET, "/api/v1/resources/**").hasAnyAuthority("ROLE_PM", "ROLE_RM", "ROLE_ADMIN", "ROLE_EMP")
+                
+                // History & Allocation của Employee (Cho Dashboard & CV)
                 .requestMatchers(HttpMethod.GET, "/api/v1/allocations/employee/**").hasAnyAuthority("ROLE_RM", "ROLE_PM", "ROLE_ADMIN", "ROLE_EMP")
-                // 4. Các chức năng ghi (Write)
+                .requestMatchers(HttpMethod.GET, "/api/v1/allocations/history/**").hasAnyAuthority("ROLE_RM", "ROLE_PM", "ROLE_ADMIN", "ROLE_EMP")
+
+                // 4. Các chức năng ghi (Write) - Chặn ở mức URL
                 .requestMatchers("/api/v1/allocations/**").hasAnyAuthority("ROLE_RM", "ROLE_ADMIN")
                 .requestMatchers("/api/v1/resources/search").hasAnyAuthority("ROLE_PM", "ROLE_RM", "ROLE_ADMIN", "ROLE_EMP")
-                .requestMatchers("/api/v1/allocations/**").hasAnyAuthority("ROLE_RM", "ROLE_ADMIN")
+                
+                // --- [MỚI] CẤU HÌNH CHO MODULE NGHỈ PHÉP ---
+                // Cho phép mọi user đã đăng nhập (authenticated) được truy cập API nghỉ phép
+                .requestMatchers("/api/v1/time-off/**").authenticated()
+                .requestMatchers("/api/v1/attendance/**").authenticated()
+                .requestMatchers("/api/v1/payroll/**").authenticated()
+                .requestMatchers("/api/v1/notifications/**").authenticated() // Cho phép user đã đăng nhập
+// ...
+             
+                // --------------------------------------------
                 
                 .anyRequest().authenticated()
             )
             .authenticationProvider(authenticationProvider())
             .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
+
         return http.build();
     }
     

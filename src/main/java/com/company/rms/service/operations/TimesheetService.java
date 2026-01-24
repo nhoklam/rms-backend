@@ -7,13 +7,14 @@ import com.company.rms.entity.operations.Timesheet;
 import com.company.rms.entity.operations.TimesheetEntry;
 import com.company.rms.entity.project.Project;
 import com.company.rms.entity.hr.Employee;
-import com.company.rms.entity.iam.User; // [MỚI] Import User
+import com.company.rms.entity.iam.User;
 import com.company.rms.exception.BusinessException;
 import com.company.rms.repository.allocation.AllocationRepository;
 import com.company.rms.repository.hr.EmployeeRepository;
-import com.company.rms.repository.iam.UserRepository; // [MỚI] Import UserRepository
+import com.company.rms.repository.iam.UserRepository;
 import com.company.rms.repository.operations.TimesheetRepository;
 import com.company.rms.repository.project.ProjectRepository;
+import com.company.rms.service.general.NotificationService; // [1. Import Service Thông báo]
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -35,7 +36,8 @@ public class TimesheetService {
     private final AllocationRepository allocationRepository;
     private final EmployeeRepository employeeRepository;
     private final ProjectRepository projectRepository;
-    private final UserRepository userRepository; // [MỚI] Inject thêm để check role
+    private final UserRepository userRepository;
+    private final NotificationService notificationService; // [2. Inject Service Thông báo]
 
     @Transactional
     public TimesheetResponse submitTimesheet(TimesheetSubmitRequest request, Long employeeId) {
@@ -105,25 +107,21 @@ public class TimesheetService {
         return mapToResponse(savedTs);
     }
 
-    // [FIX] Cập nhật logic: Admin thấy hết, PM chỉ thấy nhân viên
     @Transactional(readOnly = true)
     public List<TimesheetResponse> getPendingApprovals(Long userId) {
         if (userId == null) return new ArrayList<>();
 
-        // 1. Lấy thông tin User để check Role
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new BusinessException("User not found"));
 
         List<Timesheet> timesheets;
 
-        // 2. Kiểm tra: Nếu là ADMIN -> Lấy tất cả (Bao gồm cả của PM)
         boolean isAdmin = user.getRoles().stream()
                 .anyMatch(role -> role.getName().equals("ROLE_ADMIN"));
 
         if (isAdmin) {
             timesheets = timesheetRepository.findAllPendingTimesheets();
         } else {
-            // 3. Nếu là PM -> Chỉ lấy của nhân viên dự án mình (đã loại trừ chính mình ở Repository)
             timesheets = timesheetRepository.findPendingApprovalByPm(userId);
         }
 
@@ -141,15 +139,25 @@ public class TimesheetService {
             throw new BusinessException("Only SUBMITTED timesheets can be approved");
         }
 
-        // Chặn tự duyệt (Self-Approval Check)
         if (ts.getEmployee().getUser().getId().equals(approverId)) {
             throw new BusinessException("Bạn không thể tự duyệt Timesheet của chính mình.");
         }
 
+        // Cập nhật trạng thái
         ts.setStatus(Timesheet.TimesheetStatus.APPROVED);
         ts.setApproverId(approverId);
         ts.setApprovedAt(LocalDateTime.now());
         timesheetRepository.save(ts);
+
+        // --- [3. GỬI THÔNG BÁO CHO NHÂN VIÊN] ---
+        if (ts.getEmployee().getUser() != null) {
+            notificationService.createNotification(
+                ts.getEmployee().getUser().getId(),
+                "Timesheet đã được duyệt",
+                "Timesheet tuần " + ts.getPeriodStart() + " của bạn đã được chấp thuận.",
+                "SUCCESS"
+            );
+        }
     }
 
     @Transactional
@@ -161,10 +169,21 @@ public class TimesheetService {
             throw new BusinessException("Only SUBMITTED timesheets can be rejected");
         }
 
+        // Cập nhật trạng thái
         ts.setStatus(Timesheet.TimesheetStatus.REJECTED);
         ts.setApproverId(approverId);
         ts.setApprovedAt(LocalDateTime.now());
         timesheetRepository.save(ts);
+
+        // --- [3. GỬI THÔNG BÁO CHO NHÂN VIÊN] ---
+        if (ts.getEmployee().getUser() != null) {
+            notificationService.createNotification(
+                ts.getEmployee().getUser().getId(),
+                "Timesheet bị từ chối",
+                "Timesheet tuần " + ts.getPeriodStart() + " cần chỉnh sửa lại.",
+                "ERROR"
+            );
+        }
     }
 
     @Transactional

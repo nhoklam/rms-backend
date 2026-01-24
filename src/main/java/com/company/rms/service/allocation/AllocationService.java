@@ -1,7 +1,7 @@
 package com.company.rms.service.allocation;
 
 import com.company.rms.dto.request.AllocationRequest;
-import com.company.rms.dto.request.AllocationUpdateRequest; // [Import DTO vừa tạo]
+import com.company.rms.dto.request.AllocationUpdateRequest;
 import com.company.rms.dto.response.AllocationResponse;
 import com.company.rms.entity.allocation.Allocation;
 import com.company.rms.entity.hr.Employee;
@@ -11,6 +11,7 @@ import com.company.rms.exception.OptimisticLockException;
 import com.company.rms.repository.allocation.AllocationRepository;
 import com.company.rms.repository.hr.EmployeeRepository;
 import com.company.rms.repository.project.ProjectRepository;
+import com.company.rms.service.general.NotificationService; // [1. Import Service Thông báo]
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
@@ -29,6 +30,7 @@ public class AllocationService {
     private final AllocationRepository allocationRepository;
     private final EmployeeRepository employeeRepository;
     private final ProjectRepository projectRepository;
+    private final NotificationService notificationService; // [2. Inject Service Thông báo]
     
     @Transactional
     public AllocationResponse createAllocation(AllocationRequest request, Long createdBy) {
@@ -85,6 +87,23 @@ public class AllocationService {
         try {
             Allocation saved = allocationRepository.save(allocation);
             log.info("Allocation created successfully: {}", saved.getId());
+
+            // --- [3. GỬI THÔNG BÁO CHO NHÂN VIÊN] ---
+            if (employee.getUser() != null) {
+                String message = String.format("Bạn vừa được phân bổ vào dự án: %s (%d%% effort). Thời gian: %s đến %s.", 
+                        project.getName(), 
+                        request.getEffortPercentage(),
+                        request.getStartDate(),
+                        request.getEndDate());
+
+                notificationService.createNotification(
+                    employee.getUser().getId(),
+                    "Phân bổ dự án mới",
+                    message,
+                    "INFO"
+                );
+            }
+
             return mapToResponse(saved);
         } catch (ObjectOptimisticLockingFailureException e) {
             throw new OptimisticLockException("Dữ liệu nhân sự đã thay đổi bởi người dùng khác. Vui lòng tải lại trang.");
@@ -119,7 +138,6 @@ public class AllocationService {
                 .toList();
     }
 
-    // [FIX] Thêm method updateAllocation bị thiếu
     @Transactional
     public AllocationResponse updateAllocation(Long id, AllocationUpdateRequest request) {
         Allocation allocation = allocationRepository.findById(id)
@@ -143,6 +161,9 @@ public class AllocationService {
         }
 
         Allocation saved = allocationRepository.save(allocation);
+        
+        // [Optional] Có thể gửi thông báo cập nhật nếu cần
+        
         return mapToResponse(saved);
     }
 
@@ -155,6 +176,7 @@ public class AllocationService {
         allocation.setStatus(Allocation.AllocationStatus.TERMINATED);
         allocationRepository.save(allocation);
     }
+
     @Transactional(readOnly = true)
     public List<AllocationResponse> getAllocationsForTimesheet(Long employeeId, LocalDate fromDate, LocalDate toDate) {
         // Nếu không truyền ngày, mặc định lấy tuần hiện tại
@@ -166,11 +188,19 @@ public class AllocationService {
     }
     
     private AllocationResponse mapToResponse(Allocation allocation) {
+        // Lấy tên PM an toàn (check null)
+        String pmName = "N/A";
+        if (allocation.getProject().getProjectManager() != null && 
+            allocation.getProject().getProjectManager().getUser() != null) {
+            pmName = allocation.getProject().getProjectManager().getUser().getFullName();
+        }
+
         return AllocationResponse.builder()
             .id(allocation.getId())
             .projectId(allocation.getProject().getId())
             .projectCode(allocation.getProject().getCode())
             .projectName(allocation.getProject().getName())
+            .projectManagerName(pmName)
             .employeeId(allocation.getEmployee().getId())
             .employeeCode(allocation.getEmployee().getEmployeeCode())
             .employeeName(allocation.getEmployee().getUser().getFullName())

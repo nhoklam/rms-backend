@@ -26,4 +26,5 @@ public class AllocationResponse {
     private BigDecimal overrideBillRate;
     private String status;
     private Long version;
+    private String projectManagerName;
 }

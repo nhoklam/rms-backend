@@ -98,4 +98,15 @@ public class AllocationController {
         
         return ResponseEntity.ok(ApiResponse.success(allocations));
     }
+    // ... các import khác
+    // Thêm method này vào AllocationController
+
+    @GetMapping("/history/{employeeId}")
+    @PreAuthorize("hasAnyAuthority('ROLE_RM', 'ROLE_PM', 'ROLE_ADMIN', 'ROLE_EMP')")
+    public ResponseEntity<ApiResponse<List<AllocationResponse>>> getProjectHistory(@PathVariable Long employeeId) {
+        // Tận dụng hàm searchAllocations đã có trong Service để lấy tất cả trạng thái
+        // status = null nghĩa là lấy tất cả (ACTIVE, COMPLETED, TERMINATED)
+        List<AllocationResponse> history = allocationService.searchAllocations(null, employeeId, null);
+        return ResponseEntity.ok(ApiResponse.success(history));
+    }
 }

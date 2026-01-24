@@ -12,9 +12,7 @@ import java.util.List;
 @Repository
 public interface ViewResourceAvailabilityRepository extends JpaRepository<ViewResourceAvailability, Long> {
     
-    /**
-     * Smart Search - Tìm resource available với filters
-     */
+    // Hàm tìm kiếm cơ bản (Giữ nguyên)
     @Query("SELECT v FROM ViewResourceAvailability v " +
            "WHERE v.availableCapacity > 0 " +
            "AND (:jobTitle IS NULL OR v.jobTitle LIKE %:jobTitle%) " +
@@ -27,18 +25,19 @@ public interface ViewResourceAvailabilityRepository extends JpaRepository<ViewRe
         @Param("minCapacity") BigDecimal minCapacity
     );
 
-    /**
-     * Tìm theo skills - Join với employee_skills
-     */
+    // [FIX] Cập nhật hàm tìm theo Skill: Thêm điều kiện minCapacity
     @Query("SELECT DISTINCT v FROM ViewResourceAvailability v " +
            "JOIN Employee e ON e.id = v.employeeId " +
            "JOIN e.skills es " +
            "WHERE v.availableCapacity > 0 " +
+           // Thêm dòng check này:
+           "AND (:minCapacity IS NULL OR v.availableCapacity >= :minCapacity) " + 
            "AND es.skill.id IN :skillIds " +
            "AND es.level >= :minLevel " +
            "AND es.isVerified = true")
     List<ViewResourceAvailability> searchBySkills(
         @Param("skillIds") List<Integer> skillIds,
-        @Param("minLevel") Byte minLevel
+        @Param("minLevel") Byte minLevel,
+        @Param("minCapacity") BigDecimal minCapacity // <-- Thêm tham số này
     );
 }
