@@ -5,7 +5,6 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
-
 import java.math.BigDecimal;
 import java.util.List;
 
@@ -40,4 +39,16 @@ public interface ViewResourceAvailabilityRepository extends JpaRepository<ViewRe
         @Param("minLevel") Byte minLevel,
         @Param("minCapacity") BigDecimal minCapacity // <-- Thêm tham số này
     );
+
+    // [MỚI] Tính trung bình Utilization (currentLoad) của tất cả nhân viên
+    @Query("SELECT AVG(v.currentLoad) FROM ViewResourceAvailability v")
+    Double getAverageUtilization();
+
+    // [MỚI] Đếm số nhân viên đang rảnh rỗi hoàn toàn (Bench)
+    @Query("SELECT COUNT(v) FROM ViewResourceAvailability v WHERE v.availableCapacity = 100")
+    Long countBenchResources();
+    
+    // [MỚI] Đếm tổng số nhân viên khả dụng trong View
+    @Query("SELECT COUNT(v) FROM ViewResourceAvailability v")
+    Long countTotalResources();
 }

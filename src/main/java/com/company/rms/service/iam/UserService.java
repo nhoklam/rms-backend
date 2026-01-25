@@ -116,6 +116,7 @@ public class UserService {
                 .roles(user.getRoles() != null 
                     ? user.getRoles().stream().map(Role::getName).collect(Collectors.toSet()) 
                     : new HashSet<>())
+                .employeeId(user.getEmployee() != null ? user.getEmployee().getId() : null)
                 .build();
     }
     @Transactional

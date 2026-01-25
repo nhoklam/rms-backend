@@ -1,7 +1,7 @@
 package com.company.rms.service.hr;
 
-import com.company.rms.dto.request.EmployeeCreateRequest;
-import com.company.rms.dto.request.EmployeeUpdateRequest;
+import com.company.rms.dto.request.EmployeeCreateRequest; // [MỚI] Import DTO tạo mới
+import com.company.rms.dto.request.EmployeeRequest;
 import com.company.rms.dto.request.SkillAssessmentRequest;
 import com.company.rms.dto.response.EmployeeHistoryResponse;
 import com.company.rms.dto.response.EmployeeProfileResponse;
@@ -20,12 +20,9 @@ import com.company.rms.security.SecurityUtils;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.util.StringUtils;
 
-import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -35,128 +32,215 @@ import java.util.stream.Collectors;
 public class EmployeeService {
 
     private final EmployeeRepository employeeRepository;
-    private final EmployeeHistoryService historyService; 
     private final EmployeeSkillRepository employeeSkillRepository;
     private final DepartmentRepository departmentRepository;
     private final JobTitleRepository jobTitleRepository;
     private final LevelRepository levelRepository;
     private final SkillRepository skillRepository;
     private final EmployeeHistoryRepository historyRepository;
-    private final UserRepository userRepository; 
+    private final UserRepository userRepository;
 
-    // 1. Update Profile (Đã thêm check Inactive)
+    // ========================================================================
+    // 1. CREATE EMPLOYEE (Đã sửa để dùng EmployeeCreateRequest và User có sẵn)
+    // ========================================================================
     @Transactional
-    public EmployeeProfileResponse updateEmployeeProfile(Long id, EmployeeUpdateRequest request) {
+    public EmployeeProfileResponse createEmployee(EmployeeCreateRequest request) {
+        // 1. Validate mã nhân viên
+        if (employeeRepository.findByEmployeeCode(request.getEmployeeCode()).isPresent()) {
+            throw new BusinessException("Mã nhân viên (Employee Code) đã tồn tại.");
+        }
+
+        // 2. Tìm User có sẵn theo ID gửi từ Frontend
+        User user = userRepository.findById(request.getUserId())
+                .orElseThrow(() -> new ResourceNotFoundException("User not found with ID: " + request.getUserId()));
+
+        // 3. Kiểm tra xem User này đã liên kết với nhân viên nào chưa
+        if (employeeRepository.findByUserId(user.getId()).isPresent()) {
+            throw new BusinessException("Tài khoản User này đã được liên kết với một hồ sơ nhân viên khác.");
+        }
+
+        Employee employee = new Employee();
+        employee.setUser(user);
+        employee.setEmployeeCode(request.getEmployeeCode());
+        employee.setJoinDate(request.getJoinDate());
+        employee.setSalary(request.getSalary());
+
+        // Xử lý Status
+        if (request.getStatus() != null) {
+            try {
+                employee.setStatus(Employee.EmployeeStatus.valueOf(request.getStatus()));
+            } catch (IllegalArgumentException e) {
+                employee.setStatus(Employee.EmployeeStatus.PROBATION);
+            }
+        } else {
+            employee.setStatus(Employee.EmployeeStatus.PROBATION);
+        }
+
+        // 4. Map Master Data (Department, JobTitle, Level)
+        Department dept = departmentRepository.findById(request.getDepartmentId())
+                .orElseThrow(() -> new ResourceNotFoundException("Department not found"));
+        if (Boolean.FALSE.equals(dept.getIsActive())) {
+            throw new BusinessException("Phòng ban này đã ngưng hoạt động.");
+        }
+        employee.setDepartment(dept);
+
+        JobTitle job = jobTitleRepository.findById(request.getJobTitleId())
+                .orElseThrow(() -> new ResourceNotFoundException("JobTitle not found"));
+        if (Boolean.FALSE.equals(job.getIsActive())) {
+            throw new BusinessException("Chức danh này đã ngưng hoạt động.");
+        }
+        employee.setJobTitle(job);
+
+        Level level = levelRepository.findById(request.getLevelId())
+                .orElseThrow(() -> new ResourceNotFoundException("Level not found"));
+        if (Boolean.FALSE.equals(level.getIsActive())) {
+            throw new BusinessException("Cấp bậc này đã ngưng hoạt động.");
+        }
+        employee.setCurrentLevel(level);
+
+        // 5. Lưu Employee
+        Employee savedEmp = employeeRepository.save(employee);
+
+        // Lưu ý: Modal tạo mới ở Frontend không gửi danh sách skills, nên ta không cần xử lý skills ở đây.
+        // Skills sẽ được thêm sau ở trang Profile.
+
+        return getEmployeeProfile(savedEmp.getId());
+    }
+
+    // ========================================================================
+    // 2. UPDATE EMPLOYEE (Giữ nguyên logic cập nhật Info & Skills)
+    // ========================================================================
+    @Transactional
+    public EmployeeProfileResponse updateEmployee(Long id, EmployeeRequest request) {
         Employee emp = employeeRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Employee not found"));
 
-        Map<String, Object> oldValue = new HashMap<>();
-        Map<String, Object> newValue = new HashMap<>();
-        boolean isSensitiveChange = false;
+        // Cập nhật thông tin cơ bản
+        mapRequestToEmployee(request, emp);
+        
+        // Cập nhật thông tin User (FullName, Email)
+        if (emp.getUser() != null) {
+            emp.getUser().setFullName(request.getFullName());
+            emp.getUser().setEmail(request.getEmail());
+            userRepository.save(emp.getUser());
+        }
 
-        // --- Logic Check Level ---
-        if (request.getLevelId() != null && (emp.getCurrentLevel() == null || !request.getLevelId().equals(emp.getCurrentLevel().getId()))) {
-            oldValue.put("levelId", emp.getCurrentLevel() != null ? emp.getCurrentLevel().getId() : null);
-            newValue.put("levelId", request.getLevelId());
-            
-            Level newLevel = levelRepository.findById(request.getLevelId())
-                    .orElseThrow(() -> new ResourceNotFoundException("Level not found"));
-            
-            // [FIX] Kiểm tra Active
-            if (Boolean.FALSE.equals(newLevel.getIsActive())) {
-                throw new BusinessException("Cấp bậc (Level) đã chọn đang ngưng hoạt động (Inactive)");
+        employeeRepository.save(emp);
+
+        // Xử lý Kỹ năng: Xóa hết cái cũ -> Thêm cái mới
+        if (request.getSkills() != null) {
+            List<EmployeeSkill> oldSkills = employeeSkillRepository.findByEmployeeId(id);
+            if (!oldSkills.isEmpty()) {
+                employeeSkillRepository.deleteAll(oldSkills);
             }
-
-            emp.setCurrentLevel(newLevel);
-            isSensitiveChange = true;
+            saveEmployeeSkills(emp, request.getSkills());
         }
 
-        // --- Logic Check Job Title ---
-        if (request.getJobTitleId() != null && (emp.getJobTitle() == null || !request.getJobTitleId().equals(emp.getJobTitle().getId()))) {
-            oldValue.put("jobTitleId", emp.getJobTitle() != null ? emp.getJobTitle().getId() : null);
-            newValue.put("jobTitleId", request.getJobTitleId());
-            
-            JobTitle newTitle = jobTitleRepository.findById(request.getJobTitleId())
-                    .orElseThrow(() -> new ResourceNotFoundException("JobTitle not found"));
-            
-            // [FIX] Kiểm tra Active
-            if (Boolean.FALSE.equals(newTitle.getIsActive())) {
-                throw new BusinessException("Chức danh (Job Title) đã chọn đang ngưng hoạt động (Inactive)");
-            }
-
-            emp.setJobTitle(newTitle);
-            isSensitiveChange = true;
-        }
-
-        // --- Logic Check Salary ---
-        if (request.getSalary() != null && 
-           (emp.getSalary() == null || request.getSalary().compareTo(emp.getSalary()) != 0)) {
-            oldValue.put("salary", emp.getSalary());
-            newValue.put("salary", request.getSalary());
-            
-            emp.setSalary(request.getSalary());
-            isSensitiveChange = true;
-        }
-
-        // --- Logic Check Status ---
-        if (request.getStatus() != null && (emp.getStatus() == null || !request.getStatus().equals(emp.getStatus().name()))) {
-            oldValue.put("status", emp.getStatus());
-            newValue.put("status", request.getStatus());
-            try {
-                emp.setStatus(Employee.EmployeeStatus.valueOf(request.getStatus()));
-                isSensitiveChange = true;
-            } catch (IllegalArgumentException e) {}
-        }
-
-        // --- Update Department ---
-        if (request.getDepartmentId() != null && (emp.getDepartment() == null || !request.getDepartmentId().equals(emp.getDepartment().getId()))) {
-             Department newDept = departmentRepository.findById(request.getDepartmentId())
-                    .orElseThrow(() -> new ResourceNotFoundException("Department not found"));
-             
-             // [FIX] Kiểm tra Active
-             if (Boolean.FALSE.equals(newDept.getIsActive())) {
-                throw new BusinessException("Phòng ban (Department) đã chọn đang ngưng hoạt động (Inactive)");
-             }
-
-             emp.setDepartment(newDept);
-        }
-
-        if (isSensitiveChange) {
-            historyService.trackEmployeeChange(
-                emp, 
-                EmployeeHistory.ChangeType.SALARY_ADJUSTMENT, 
-                oldValue, 
-                newValue, 
-                LocalDate.now()
-            );
-        }
-
-        Employee savedEmp = employeeRepository.save(emp);
-        return getEmployeeProfile(savedEmp.getId());
+        return getEmployeeProfile(emp.getId());
     }
+
+    // ========================================================================
+    // PRIVATE HELPER METHODS
+    // ========================================================================
+
+    private void mapRequestToEmployee(EmployeeRequest req, Employee e) {
+        e.setEmployeeCode(req.getEmployeeCode());
+        e.setJoinDate(req.getJoinDate());
+
+        // Validate & Set Master Data
+        if (req.getJobTitleId() != null) {
+            JobTitle jobTitle = jobTitleRepository.findById(req.getJobTitleId().intValue())
+                    .orElseThrow(() -> new ResourceNotFoundException("JobTitle not found"));
+            if (Boolean.FALSE.equals(jobTitle.getIsActive())) {
+                throw new BusinessException("Chức danh này đã ngưng hoạt động (Inactive)");
+            }
+            e.setJobTitle(jobTitle);
+        }
+
+        if (req.getLevelId() != null) {
+            Level level = levelRepository.findById(req.getLevelId().intValue())
+                    .orElseThrow(() -> new ResourceNotFoundException("Level not found"));
+            if (Boolean.FALSE.equals(level.getIsActive())) {
+                throw new BusinessException("Cấp bậc này đã ngưng hoạt động (Inactive)");
+            }
+            e.setCurrentLevel(level);
+        }
+
+        if (req.getDepartmentId() != null) {
+            Department dept = departmentRepository.findById(req.getDepartmentId().intValue())
+                    .orElseThrow(() -> new ResourceNotFoundException("Department not found"));
+            if (Boolean.FALSE.equals(dept.getIsActive())) {
+                throw new BusinessException("Phòng ban này đã ngưng hoạt động (Inactive)");
+            }
+            e.setDepartment(dept);
+        }
+    }
+
+    private void saveEmployeeSkills(Employee employee, List<EmployeeRequest.SkillEntry> skillEntries) {
+        if (skillEntries == null || skillEntries.isEmpty()) return;
+
+        List<EmployeeSkill> skills = skillEntries.stream().map(entry -> {
+            Skill skill = skillRepository.findById(entry.getSkillId().intValue())
+                    .orElseThrow(() -> new ResourceNotFoundException("Skill ID " + entry.getSkillId() + " not found"));
+
+            if (Boolean.FALSE.equals(skill.getIsActive())) {
+                throw new BusinessException("Kỹ năng " + skill.getName() + " đã ngưng hoạt động.");
+            }
+
+            return EmployeeSkill.builder()
+                    .id(new EmployeeSkillId(employee.getId(), skill.getId()))
+                    .employee(employee)
+                    .skill(skill)
+                    .level(entry.getLevel().byteValue()) 
+                    .isVerified(false)
+                    .build();
+        }).collect(Collectors.toList());
+
+        employeeSkillRepository.saveAll(skills);
+    }
+
+    // ========================================================================
+    // READ METHODS (GET)
+    // ========================================================================
 
     @Transactional(readOnly = true)
     public EmployeeProfileResponse getEmployeeProfile(Long id) {
         Employee emp = employeeRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Employee not found"));
 
+        // [FIX] Sửa lỗi Type Mismatch: DTO cần Integer
+        Integer deptId = (emp.getDepartment() != null) ? emp.getDepartment().getId() : null;
+        String deptName = (emp.getDepartment() != null) ? emp.getDepartment().getName() : null;
+
+        Integer jobTitleId = (emp.getJobTitle() != null) ? emp.getJobTitle().getId() : null;
+        String jobTitleName = (emp.getJobTitle() != null) ? emp.getJobTitle().getName() : null;
+
+        Integer levelId = (emp.getCurrentLevel() != null) ? emp.getCurrentLevel().getId() : null;
+        String levelName = (emp.getCurrentLevel() != null) ? emp.getCurrentLevel().getName() : null;
+        
+        // Handle Manager Info
+        Long managerId = (emp.getManager() != null) ? emp.getManager().getId() : null;
+        String managerName = (emp.getManager() != null && emp.getManager().getUser() != null) 
+                                ? emp.getManager().getUser().getFullName() : null;
+
         return EmployeeProfileResponse.builder()
                 .id(emp.getId())
                 .employeeCode(emp.getEmployeeCode())
                 .fullName(emp.getUser() != null ? emp.getUser().getFullName() : null)
                 .email(emp.getUser() != null ? emp.getUser().getEmail() : null)
-                .departmentId(emp.getDepartment() != null ? emp.getDepartment().getId() : null)
-                .departmentName(emp.getDepartment() != null ? emp.getDepartment().getName() : null)
-                .jobTitleId(emp.getJobTitle() != null ? emp.getJobTitle().getId() : null)
-                .jobTitleName(emp.getJobTitle() != null ? emp.getJobTitle().getName() : null)
-                .levelId(emp.getCurrentLevel() != null ? emp.getCurrentLevel().getId() : null)
-                .levelName(emp.getCurrentLevel() != null ? emp.getCurrentLevel().getName() : null)
+                
+                .departmentId(deptId)
+                .departmentName(deptName)
+                .jobTitleId(jobTitleId)
+                .jobTitleName(jobTitleName)
+                .levelId(levelId)
+                .levelName(levelName)
+                
                 .salary(emp.getSalary())
                 .status(emp.getStatus() != null ? emp.getStatus().name() : null)
                 .joinDate(emp.getJoinDate())
-                .managerId(emp.getManager() != null ? emp.getManager().getId() : null)
-                .managerName(emp.getManager() != null && emp.getManager().getUser() != null 
-                        ? emp.getManager().getUser().getFullName() : null)
+                .managerId(managerId)
+                .managerName(managerName)
                 .build();
     }
 
@@ -169,7 +253,7 @@ public class EmployeeService {
                 .map(es -> EmployeeSkillResponse.builder()
                         .skillId(es.getSkill().getId())
                         .skillName(es.getSkill().getName())
-                        .level(es.getLevel().intValue())
+                        .level(es.getLevel() != null ? es.getLevel().intValue() : 0)
                         .isVerified(es.getIsVerified())
                         .verifiedAt(es.getVerifiedAt())
                         .build())
@@ -190,23 +274,25 @@ public class EmployeeService {
                             .changeType(h.getChangeType() != null ? h.getChangeType().name() : "UPDATE")
                             .oldValue(oldMap)
                             .newValue(newMap)
-                            .effectiveDate(h.getEffectiveDate()) 
-                            .changedBy(h.getChangedBy()) 
+                            .effectiveDate(h.getEffectiveDate())
+                            .changedBy(h.getChangedBy())
                             .build();
                 })
                 .collect(Collectors.toList());
     }
 
-    // 2. Assess Skill (Đã thêm check Inactive)
+    // ========================================================================
+    // OTHER ACTIONS (Assess, Verify)
+    // ========================================================================
+
     @Transactional
     public void assessSkill(Long employeeId, SkillAssessmentRequest request, boolean isVerifier) {
         Employee emp = employeeRepository.findById(employeeId)
                 .orElseThrow(() -> new ResourceNotFoundException("Employee not found"));
-        
+
         Skill skill = skillRepository.findById(request.getSkillId())
                 .orElseThrow(() -> new ResourceNotFoundException("Skill not found"));
 
-        // [FIX] Kiểm tra Active
         if (Boolean.FALSE.equals(skill.getIsActive())) {
             throw new BusinessException("Kỹ năng (Skill) này đã ngưng sử dụng (Inactive)");
         }
@@ -229,9 +315,9 @@ public class EmployeeService {
             employeeSkill.setVerifiedAt(LocalDateTime.now());
         } else {
             if (!Boolean.TRUE.equals(employeeSkill.getIsVerified())) {
-               employeeSkill.setIsVerified(false);
-               employeeSkill.setVerifiedBy(null);
-               employeeSkill.setVerifiedAt(null);
+                employeeSkill.setIsVerified(false);
+                employeeSkill.setVerifiedBy(null);
+                employeeSkill.setVerifiedAt(null);
             }
         }
         employeeSkillRepository.save(employeeSkill);
@@ -241,62 +327,11 @@ public class EmployeeService {
     public void verifySkill(Long employeeId, Integer skillId) {
         EmployeeSkill employeeSkill = employeeSkillRepository.findById(new EmployeeSkillId(employeeId, skillId))
                 .orElseThrow(() -> new ResourceNotFoundException("Employee Skill not found"));
-        
+
         employeeSkill.setIsVerified(true);
         employeeSkill.setVerifiedBy(SecurityUtils.getCurrentUserId());
         employeeSkill.setVerifiedAt(LocalDateTime.now());
-        
+
         employeeSkillRepository.save(employeeSkill);
-    }
-
-    // 3. Create Employee (Đã thêm check Inactive)
-    @Transactional
-    public EmployeeProfileResponse createEmployee(EmployeeCreateRequest request) {
-        User user = userRepository.findById(request.getUserId())
-                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
-        
-        if (employeeRepository.findByUserId(request.getUserId()).isPresent()) {
-            throw new BusinessException("User is already linked to an employee profile");
-        }
-
-        if (employeeRepository.findByEmployeeCode(request.getEmployeeCode()).isPresent()) {
-            throw new BusinessException("Employee code already exists");
-        }
-
-        // --- Fetch & Check Master Data ---
-        Department dept = departmentRepository.findById(request.getDepartmentId())
-                .orElseThrow(() -> new ResourceNotFoundException("Department not found"));
-        // [FIX] Check Active
-        if (Boolean.FALSE.equals(dept.getIsActive())) {
-            throw new BusinessException("Phòng ban này đã ngưng hoạt động (Inactive)");
-        }
-
-        JobTitle jobTitle = jobTitleRepository.findById(request.getJobTitleId())
-                .orElseThrow(() -> new ResourceNotFoundException("JobTitle not found"));
-        // [FIX] Check Active
-        if (Boolean.FALSE.equals(jobTitle.getIsActive())) {
-            throw new BusinessException("Chức danh này đã ngưng hoạt động (Inactive)");
-        }
-
-        Level level = levelRepository.findById(request.getLevelId())
-                .orElseThrow(() -> new ResourceNotFoundException("Level not found"));
-        // [FIX] Check Active
-        if (Boolean.FALSE.equals(level.getIsActive())) {
-            throw new BusinessException("Cấp bậc này đã ngưng hoạt động (Inactive)");
-        }
-
-        Employee employee = Employee.builder()
-                .user(user)
-                .employeeCode(request.getEmployeeCode())
-                .department(dept)
-                .jobTitle(jobTitle)
-                .currentLevel(level)
-                .joinDate(request.getJoinDate())
-                .salary(request.getSalary())
-                .status(request.getStatus() != null ? Employee.EmployeeStatus.valueOf(request.getStatus()) : Employee.EmployeeStatus.PROBATION)
-                .build();
-
-        Employee savedEmp = employeeRepository.save(employee);
-        return getEmployeeProfile(savedEmp.getId());
     }
 }

@@ -13,4 +13,5 @@ public class UserResponse {
     private String email;
     private Boolean isActive;
     private Set<String> roles;
+    private Long employeeId;
 }

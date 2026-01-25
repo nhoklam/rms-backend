@@ -14,6 +14,8 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import com.company.rms.dto.response.ResourceHealthResponse;
+import com.company.rms.service.general.AdminDashboardService;
 
 import java.time.LocalDate;
 import java.time.temporal.ChronoField;
@@ -25,6 +27,7 @@ public class DashboardController {
 
     private final AllocationRepository allocationRepository;
     private final TimesheetEntryRepository timesheetEntryRepository;
+    private final AdminDashboardService adminDashboardService;
 
     @GetMapping("/employee/stats")
     @PreAuthorize("hasAnyAuthority('ROLE_EMP', 'ROLE_PM', 'ROLE_RM', 'ROLE_ADMIN')")
@@ -67,5 +70,10 @@ public class DashboardController {
                 .isTimesheetSubmitted(false) 
                 .build()
         ));
+    }
+    @GetMapping("/admin/resource-health")
+    @PreAuthorize("hasAnyAuthority('ROLE_ADMIN', 'ROLE_RM', 'ROLE_PM')")
+    public ResponseEntity<ApiResponse<ResourceHealthResponse>> getResourceHealth() {
+        return ResponseEntity.ok(ApiResponse.success(adminDashboardService.getResourceHealthStats()));
     }
 }
