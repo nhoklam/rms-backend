@@ -17,6 +17,7 @@ import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -31,7 +32,7 @@ public class AttendanceService {
     private static final LocalTime START_TIME = LocalTime.of(9, 0);
     private static final LocalTime END_TIME = LocalTime.of(18, 0);
     private static final double LUNCH_BREAK_HOURS = 1.0;
-
+    private static final ZoneId VIETNAM_ZONE = ZoneId.of("Asia/Ho_Chi_Minh");
     // Helper map to DTO
     private AttendanceLogResponse mapToResponse(AttendanceLog log) {
         if (log == null) return null;
@@ -86,12 +87,12 @@ public class AttendanceService {
     @Transactional
     public AttendanceLogResponse checkOut() { // Đổi kiểu trả về
         Long empId = SecurityUtils.getCurrentEmployeeId();
-        LocalDate today = LocalDate.now();
+        LocalDate today = LocalDate.now(VIETNAM_ZONE);
 
         AttendanceLog log = attendanceRepository.findByEmployeeIdAndLogDate(empId, today)
                 .orElseThrow(() -> new BusinessException("Bạn chưa Check-in hôm nay!"));
 
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = LocalDateTime.now(VIETNAM_ZONE);
         log.setCheckOutTime(now);
 
         long durationMinutes = Duration.between(log.getCheckInTime(), now).toMinutes();
@@ -125,8 +126,9 @@ public class AttendanceService {
     @Transactional(readOnly = true)
     public List<AttendanceLogResponse> getMyHistory() { // Đổi kiểu trả về
         Long empId = SecurityUtils.getCurrentEmployeeId();
-        LocalDate start = LocalDate.now().minusDays(30);
-        return attendanceRepository.findByEmployeeIdAndLogDateBetween(empId, start, LocalDate.now())
+        LocalDate now = LocalDate.now(VIETNAM_ZONE);
+        LocalDate start = now.minusDays(30);
+        return attendanceRepository.findByEmployeeIdAndLogDateBetween(empId, start, now)
                 .stream().map(this::mapToResponse).collect(Collectors.toList());
     }
 
