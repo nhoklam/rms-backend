@@ -41,4 +41,4 @@ logging:
 
 gemini:
   api:
-    key: AIzaSyAK4yXiLZKDxWqC0AtQiBt-uF9kWzy28Z8
+    key: ${GEMINI_API_KEY}
